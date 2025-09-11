@@ -1,0 +1,72 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+
+model User {
+  id              Int             @id @default(autoincrement())
+  firstName       String
+  lastName        String
+  email           String          @unique
+  password        String
+  postCode        String
+
+  // OTP Verification
+  otp             Int?
+  otpVerified     Boolean         @default(false)
+
+  // The referral usage (if this user signed up with someone else’s code)
+  usedReferral    ReferralUsage?  @relation("UsedCode")
+
+  // The referral code this user owns (generated only after OTP verified)
+  referralCode    ReferralCode?
+
+  // Users this person referred (via referral usage records)
+  referralsMade   ReferralUsage[] @relation("ReferredByUser")
+
+  createdAt       DateTime        @default(now())
+}
+
+model ReferralCode {
+  id        Int             @id @default(autoincrement())
+  code      String          @unique
+  count     Int             @default(0)
+
+  // One-to-one with User
+  owner     User            @relation(fields: [ownerId], references: [id])
+  ownerId   Int             @unique
+
+  // Track all the times this code was used
+  usages    ReferralUsage[]
+
+  createdAt DateTime        @default(now())
+}
+
+model ReferralUsage {
+  id             Int        @id @default(autoincrement())
+
+  // The referral code that was used
+  referralCodeId Int
+  referralCode   ReferralCode @relation(fields: [referralCodeId], references: [id])
+
+  // The user who used this code (the new user)
+  usedById       Int   @unique
+  usedBy         User  @relation("UsedCode", fields: [usedById], references: [id])
+
+  // The user who owns the referral code (the referrer)
+  referredById   Int
+  referredBy     User  @relation("ReferredByUser", fields: [referredById], references: [id])
+
+  createdAt      DateTime @default(now())
+}
