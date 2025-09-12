@@ -4,7 +4,7 @@ import SignupFormDemo from '../components/signup'
 
 export default function signUpPage() {
   return (
-    <div>
+    <div className='mt-10'>
         <SignupFormDemo/>
     </div>
   )

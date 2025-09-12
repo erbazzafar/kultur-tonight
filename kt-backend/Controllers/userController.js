@@ -1,5 +1,9 @@
 const bcrypt = require('bcryptjs')
 const { default: prisma } = require('../prismaClient')
+const jwt = require('jsonwebtoken')
+const sendEmail = require('../sendGrid/sendMail')
+const otpEmail = require('../Services/otpEmail')
+const welcomeEmail = require('../Services/welcomeEmail')
 
 /**
  * Signup API
@@ -20,10 +24,12 @@ function generateReferralCode() {
 
 async function findUser(id) {
     const user = await prisma.user.findUnique({
-        where: id
+        where: {
+            id: id
+        }
     })
     if (!user) {
-        return res.status(404).json({status: 'fail', message: 'User not found!!'})
+        return res.status(404).json({ status: 'fail', message: 'User not found!!' })
     }
     return user
 }
@@ -41,6 +47,7 @@ const userSignUp = async (req, res) => {
         const existingUser = await prisma.user.findUnique({
             where: { email }
         })
+
         if (existingUser) {
             return res.status(400).json({ status: 'fail', message: 'User already exists' })
         }
@@ -56,6 +63,7 @@ const userSignUp = async (req, res) => {
             referralCodeRecord = await prisma.referralCode.findUnique({
                 where: { code: referral }
             })
+            console.log("----------Referral code record------:", referralCodeRecord);
             if (!referralCodeRecord) {
                 return res.status(400).json({ status: 'fail', message: 'Invalid referral code' })
             }
@@ -83,26 +91,31 @@ const userSignUp = async (req, res) => {
 
         // ✅ 8. If referral provided → store temp relation
         if (referralCodeRecord) {
+            console.log("Referral code record found:", referralCodeRecord);
             await prisma.referralUsage.create({
                 data: {
                     referralCodeId: referralCodeRecord.id,
-                    usedById: newUser.id,          // the new user
-                    referredById: referralCodeRecord.ownerId // the referrer
+                    usedById: newUser.id,
+                    referredById: referralCodeRecord.ownerId
                 }
             })
         }
 
-        return res.status(201).json({
+        await sendEmail(
+            email,
+            'Your OTP Code',
+            otpEmail(newOtp, firstName)
+        )
+
+        return res.status(200).json({
             status: 'ok',
-            message: 'User registered. Please verify OTP sent to your email.',
-            data: newUser
+            message: 'User registered. Please verify OTP sent to your email.'
         })
     } catch (error) {
         console.error('Error in userSignUp:', error)
         return res.status(500).json({ status: 'fail', message: 'Server Error' })
     }
 }
-
 
 const verifyOtp = async (req, res) => {
     try {
@@ -114,8 +127,12 @@ const verifyOtp = async (req, res) => {
 
         const user = await prisma.user.findUnique({
             where: { email },
-            include: { usedReferral: true }
-        })
+            include: {
+                usedReferral: {
+                    include: { referralCode: true }  // pull referralCode details
+                }
+            }
+        });
 
         if (!user) {
             return res.status(404).json({ status: 'fail', message: 'User not found' })
@@ -144,12 +161,33 @@ const verifyOtp = async (req, res) => {
             include: { referralCode: true }
         })
 
-        if (user.usedReferral) {
+        console.log("before incremention");
+
+
+        if (user.usedReferral && user.usedReferral.referralCode) {
+            console.log("iin between incremention");
+
+            console.log("Incrementing count for referralCodeId:", user.usedReferral.referralCode.id);
+
             await prisma.referralCode.update({
-                where: { id: user.usedReferral.referralCodeId },
+                where: { id: user.usedReferral.referralCode.id },
                 data: { count: { increment: 1 } }
-            })
+            });
         }
+
+        console.log("after incremention");
+
+        const token = jwt.sign(
+            { id: updatedUser.id },
+            process.env.JWT_SECRET_KEY,
+            { expiresIn: '1d' }
+        )
+
+        await sendEmail(
+            updatedUser.email, 
+            'Welcome to Kultur Tonight', 
+            welcomeEmail(updatedUser.firstName, updatedUser.referralCode.code)
+        )
 
         return res.status(200).json({
             status: 'ok',
@@ -158,24 +196,26 @@ const verifyOtp = async (req, res) => {
                 userId: updatedUser.id,
                 email: updatedUser.email,
                 referralCode: updatedUser.referralCode.code
-            }
+            },
+            token
         })
     } catch (error) {
         console.error('Error in verifyOtp:', error)
         return res.status(500).json({ status: 'fail', message: 'Server Error' })
     }
 }
+
 const getAllRferralCodes = async (req, res) => {
     try {
         const codes = await prisma.referralCode.findMany()
         if (!codes || codes.length === 0) {
-            return res.status(404).json({status: 'fail', message: 'No referral codes found' })
+            return res.status(404).json({ status: 'fail', message: 'No referral codes found' })
         }
         return res.status(200).json({ status: 'ok', data: codes })
     } catch (error) {
         return res.status(500).json({ status: 'fail', message: 'Server Error' })
     }
-} 
+}
 
 const getReferralUsages = async (req, res) => {
     try {
@@ -195,20 +235,17 @@ const getReferralUsages = async (req, res) => {
 
 const getUserReferralUsages = async (req, res) => {
     try {
-        const {id} = req.params
-        const user = await prisma.user.findUnique({
-            where: {
-                id: parseInt(id)
-            }
-        })
+        const userId = parseInt(req.params.id)
 
-        if (!user) {
-            return res.status(404).json({status: 'fail', message: 'User not found !!'})
+        if (!userId) {
+            return res.status(400).json({ status: 'fail', message: 'Please provide the user Id' })
         }
+
+        findUser(userId)
 
         const getUserCodeEntries = await prisma.referralUsage.findMany({
             where: {
-                referredById: parseInt(id)
+                referredById: userId
             },
             include: {
                 referralCode: true,
@@ -216,11 +253,11 @@ const getUserReferralUsages = async (req, res) => {
             }
         })
 
-        if (!getUserCodeEntries){
-            return res.status(404).json({status: 'fail', message: 'User table not found'})
-        } 
+        if (!getUserCodeEntries) {
+            return res.status(404).json({ status: 'fail', message: 'User table not found' })
+        }
 
-        return res.status(200).json({status: 'ok', message: 'User table found', data: getUserCodeEntries})
+        return res.status(200).json({ status: 'ok', message: 'User table found', data: getUserCodeEntries })
 
 
     } catch (error) {
@@ -234,10 +271,10 @@ const getUserReferalCount = async (req, res) => {
         const userId = parseInt(req.params.id)
 
         if (!userId) {
-            return res.status(400).json({status: 'fail', message: 'Please provide the user Id'})
+            return res.status(400).json({ status: 'fail', message: 'Please provide the user Id' })
         }
 
-        const user = findUser(userId)
+        findUser(userId)
 
         const getCount = await prisma.referralCode.findFirst({
             where: {
@@ -246,16 +283,65 @@ const getUserReferalCount = async (req, res) => {
         })
 
         if (!getCount) {
-            return res.status(404).json({status: 'fail', message: 'Referral Code not found for this User'})
+            return res.status(404).json({ status: 'fail', message: 'Referral Code not found for this User' })
         }
 
-        return res.status(200).json({status: 'ok', message: 'Referral Code Entry found', data: getCount})
+        return res.status(200).json({ status: 'ok', message: 'Referral Code Entry found', data: getCount })
 
 
     } catch (error) {
+        return res.status(500).json({ status: 'fail', message: 'Server Error' })
+    }
+}
+
+const allUsers = async (req, res) => {
+    try {
+        const users = await prisma.user.findMany()
+
+        if (users.length === 0 || !users) {
+            return res.status(404).json({ status: 'fail', message: 'usern not found' })
+        }
+
+        return res.status(200).json({ status: 'ok', message: 'Users fetced successfully !!', data: users })
+    } catch (error) {
+        return res.status(500).json({ status: 'fail', message: 'Server Error !!' })
+    }
+}
+
+const tableThroughCode = async (req, res) => {
+    try {
+        const {referralCode} = req.params
+        if (!referralCode || referralCode.length !== 12) {
+            return res.status(400).json({status: 'fail', message: 'Referral Code not correct'})
+        }
+
+        const findCode = await prisma.referralCode.findUnique({
+            where: {
+                code: referralCode
+            }
+        })
+
+        if (!findCode) {
+            return res.status(404).json({status: 'fail', message: 'Referral Code not found'})
+        }
+
+        const referalTable = await prisma.referralUsage.findMany ({
+            where: {
+                referralCodeId: parseInt(findCode.id)
+            },
+            include: {
+                usedBy: true
+            }
+        })
+
+        return res.status(200).json({status: 'ok', message: 'Success', data: referalTable})
+        
+    } catch (error) {
+        console.error(error)
         return res.status(500).json({status: 'fail', message: 'Server Error'})
     }
 }
+
 
 module.exports = {
     userSignUp,
@@ -263,5 +349,7 @@ module.exports = {
     getReferralUsages,
     getAllRferralCodes,
     getUserReferralUsages,
-    getUserReferalCount
+    getUserReferalCount,
+    allUsers,
+    tableThroughCode
 }

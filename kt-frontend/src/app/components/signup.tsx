@@ -3,9 +3,10 @@ import React, { useState } from "react";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
-import { Fira_Code } from "next/font/google";
 import axios from "axios";
 import OtpModal from "./muiModel";
+import Cookies from "js-cookie";
+import { useRouter } from "next/navigation";
 
 interface User {
     firstName: string,
@@ -13,7 +14,7 @@ interface User {
     email: string,
     password: string,
     postCode: string,
-    referalCode: string
+    referral : string
 }
 
 export default function SignupFormDemo() {
@@ -23,11 +24,12 @@ export default function SignupFormDemo() {
         email: '',
         password: '',
         postCode: '',
-        referalCode: ''
+        referral : ''
     })
 
     const [otp, setOtp] = useState<string>("")
     const [isOtpModelOpen, setIsOtpModelOpen] = useState <boolean> (false)
+    const router = useRouter()
 
 
     const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -54,7 +56,7 @@ export default function SignupFormDemo() {
         
         try {
             const sentForm = await axios.post(
-                `${process.env.URL}/user/sign-up`,
+                `http://localhost:8010/user/sign-up`,
                 formData,
                 {
                     headers: {
@@ -72,6 +74,7 @@ export default function SignupFormDemo() {
             console.log("Response from send form: ",sentForm.data)
 
         } catch (error) {
+            console.error("Error submitting the form:", error)
             throw new Error
         }
     };
@@ -84,7 +87,7 @@ export default function SignupFormDemo() {
             }
 
             const sendOtp = await axios.post(
-                `${process.env.URL}/user/verify-otp`,
+                `http://localhost:8010/user/verify-otp`,
                 {
                     email: formData.email,
                     otp
@@ -109,12 +112,15 @@ export default function SignupFormDemo() {
                 email: '',
                 password: '',
                 postCode: '',
-                referalCode: ''
+                referral : ''
             })
 
             console.log('User signed up successfully !!')
-            const data = sendOtp.data
-            console.log("Response from verify otp: ",data)
+            const response = sendOtp.data
+            console.log("Response from verify otp: ",response)
+            Cookies.set("token", response.token)
+            router.push(`/${response.referralCode}`)
+
 
         } catch (error) {
             throw new Error
@@ -187,8 +193,8 @@ export default function SignupFormDemo() {
                         id="referalCode"
                         placeholder="REF344GJY45I"
                         type="text"
-                        onChange={(e) => setFormData({ ...formData, referalCode: e.target.value })}
-                        value={formData.referalCode} />
+                        onChange={(e) => setFormData({ ...formData, referral: e.target.value })}
+                        value={formData.referral} />
                 </LabelInputContainer>
 
                 <button
