@@ -17,7 +17,10 @@ app.use(cors({
 
 
 app.get('/', (req, res) => {
-  res.send('KT-Backend is running!');
+  res.json({
+    status: "ok",
+    message: 'KT-Backend is running!'
+  });
 })
 
 

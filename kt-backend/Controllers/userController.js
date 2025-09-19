@@ -107,6 +107,8 @@ const userSignUp = async (req, res) => {
             otpEmail(newOtp, firstName)
         )
 
+        console.log("New user created: ",newUser)
+
         return res.status(200).json({
             status: 'ok',
             message: 'User registered. Please verify OTP sent to your email.'
